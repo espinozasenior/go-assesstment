@@ -48,6 +48,9 @@ resource "google_container_node_pool" "primary_nodes" {
       "https://www.googleapis.com/auth/devstorage.read_only"
     ]
 
+    # Use the service account created for the GKE nodes
+    service_account = google_service_account.gke_sa.email
+
     labels = {
       env = var.project_id
     }
