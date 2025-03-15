@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/rs/zerolog"
 	appsv1 "k8s.io/api/apps/v1"
@@ -82,18 +83,14 @@ func (r *AppDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// Update status to Failed
 			appDeployment.Status.Status = "Failed"
 			appDeployment.Status.Message = fmt.Sprintf("Failed to create deployment: %s", err)
-			err := r.Status().Update(ctx, appDeployment)
-			if err != nil {
-				logger.Error().Err(err).Msg("Failed to update AppDeployment status")
-			}
+			err := r.updateStatus(ctx, req, appDeployment, logger)
 			return ctrl.Result{}, err
 		}
 		// Update status to Pending
 		appDeployment.Status.Status = "Pending"
 		appDeployment.Status.Message = "Deployment created, waiting for pods"
-		err := r.Status().Update(ctx, appDeployment)
-		if err != nil {
-			logger.Error().Err(err).Msg("Failed to update AppDeployment status")
+		if err := r.updateStatus(ctx, req, appDeployment, logger); err != nil {
+			return ctrl.Result{}, err
 		}
 		// Deployment created successfully - return and requeue
 		return ctrl.Result{Requeue: true}, nil
@@ -115,18 +112,14 @@ func (r *AppDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// Update status to Failed
 			appDeployment.Status.Status = "Failed"
 			appDeployment.Status.Message = fmt.Sprintf("Failed to update deployment: %s", err)
-			err := r.Status().Update(ctx, appDeployment)
-			if err != nil {
-				logger.Error().Err(err).Msg("Failed to update AppDeployment status")
-			}
+			err := r.updateStatus(ctx, req, appDeployment, logger)
 			return ctrl.Result{}, err
 		}
 		// Update status to Pending
 		appDeployment.Status.Status = "Pending"
 		appDeployment.Status.Message = "Deployment updated, waiting for pods"
-		err := r.Status().Update(ctx, appDeployment)
-		if err != nil {
-			logger.Error().Err(err).Msg("Failed to update AppDeployment status")
+		if err := r.updateStatus(ctx, req, appDeployment, logger); err != nil {
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{Requeue: true}, nil
 	}
@@ -146,9 +139,8 @@ func (r *AppDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		appDeployment.Status.Message = "Deployment created, waiting for pods"
 	}
 
-	err = r.Status().Update(ctx, appDeployment)
+	err = r.updateStatus(ctx, req, appDeployment, logger)
 	if err != nil {
-		logger.Error().Err(err).Msg("Failed to update AppDeployment status")
 		return ctrl.Result{}, err
 	}
 
@@ -222,6 +214,47 @@ func deploymentNeedsUpdate(dep *appsv1.Deployment, app *platformv1.AppDeployment
 	}
 
 	return false
+}
+
+// updateStatus updates the status of the AppDeployment with retry logic for conflict errors
+func (r *AppDeploymentReconciler) updateStatus(ctx context.Context, req ctrl.Request, appDeployment *platformv1.AppDeployment, logger zerolog.Logger) error {
+	var updateErr error
+	backoff := time.Second
+	for retries := 0; retries < 5; retries++ {
+		updateErr = r.Status().Update(ctx, appDeployment)
+		if updateErr == nil {
+			return nil
+		}
+
+		if !errors.IsConflict(updateErr) {
+			logger.Error().Err(updateErr).Msg("Failed to update AppDeployment status")
+			return updateErr
+		}
+
+		// If we get a conflict, fetch the latest version and retry
+		logger.Info().Msg("Conflict detected when updating AppDeployment status, retrying with latest version")
+
+		// Get the latest version of the resource
+		latestAppDeployment := &platformv1.AppDeployment{}
+		if err := r.Get(ctx, req.NamespacedName, latestAppDeployment); err != nil {
+			logger.Error().Err(err).Msg("Failed to get latest AppDeployment")
+			return err
+		}
+
+		// Copy only status fields to avoid overwriting spec changes
+		latestAppDeployment.Status.Status = appDeployment.Status.Status
+		latestAppDeployment.Status.Message = appDeployment.Status.Message
+
+		// Update our reference to use the latest resource version
+		appDeployment = latestAppDeployment
+
+		// Wait before retrying
+		time.Sleep(backoff)
+		backoff *= 2 // Exponential backoff
+	}
+
+	logger.Error().Err(updateErr).Msg("Failed to update AppDeployment status after multiple retries")
+	return updateErr
 }
 
 // SetupWithManager sets up the controller with the Manager.
