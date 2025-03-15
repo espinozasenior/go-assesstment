@@ -35,7 +35,6 @@ terraform/*.tfvars
 !terraform/terraform.tfvars.example
 .terraformrc
 terraform.rc
-terraform/.terraform.lock.hcl
 terraform/crash.log
 terraform/override.tf
 terraform/override.tf.json
