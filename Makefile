@@ -1,4 +1,4 @@
-.PHONY: init plan apply destroy
+.PHONY: init plan apply destroy kubeconfig
 
 init:
 	terraform init
@@ -11,3 +11,6 @@ apply:
 
 destroy:
 	terraform destroy -var-file=terraform.tfvars -auto-approve
+
+kubeconfig:
+	./scripts/generate_kubeconfig.sh
