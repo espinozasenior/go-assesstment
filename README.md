@@ -14,4 +14,6 @@
 ### TROUBLESHOOTING
 "google: could not find default credentials" - run `gcloud auth application-default login`
 
+"oauth2: invalid_grant" - run `gcloud auth application-default login`
+
 "gke-gcloud-auth-plugin was not found or is not executable" - run `gcloud components install gke-gcloud-auth-plugin`
