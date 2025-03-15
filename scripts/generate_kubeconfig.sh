@@ -5,9 +5,9 @@
 set -e
 
 # Get variables from terraform output
-CLUSTER_NAME=$(terraform output -raw cluster_name)
-CLUSTER_REGION=$(terraform output -raw region 2>/dev/null || grep region terraform.tfvars | cut -d '=' -f2 | tr -d ' "')
-PROJECT_ID=$(grep project_id terraform.tfvars | cut -d '=' -f2 | tr -d ' "')
+CLUSTER_NAME=$(cd terraform && terraform output -raw cluster_name)
+CLUSTER_REGION=$(cd terraform && terraform output -raw region 2>/dev/null || grep region terraform/terraform.tfvars | cut -d '=' -f2 | tr -d ' "')
+PROJECT_ID=$(grep project_id terraform/terraform.tfvars | cut -d '=' -f2 | tr -d ' "')
 
 # Check if variables are set
 if [ -z "$CLUSTER_NAME" ] || [ -z "$PROJECT_ID" ] || [ -z "$CLUSTER_REGION" ]; then

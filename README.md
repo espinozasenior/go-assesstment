@@ -5,7 +5,7 @@
 * [Kubectl](https://kubernetes.io/docs/tasks/tools/)
 
 ### INSTRUCTIONS
-- Copy `terraform.tfvars.example` to`terraform.tfvars` and fill in your GCP project ID
+- Copy `terraform/terraform.tfvars.example` to `terraform/terraform.tfvars` and fill in your GCP project ID
 - Run `make init` to initialize Terraform
 - Run `make plan` to see any changes that are required for your infrastructure
 - Run `make apply` to create the GKE cluster
