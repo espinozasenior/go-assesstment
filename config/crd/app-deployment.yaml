@@ -1,0 +1,10 @@
+apiVersion: platform.deskree.com/v1
+kind: AppDeployment
+metadata:
+  name: my-app
+spec:
+  image: "nginx:latest"
+  appName: "my-nginx-app"
+  memoryLimit: "512Mi"
+  minReplicas: 1
+  maxReplicas: 3
