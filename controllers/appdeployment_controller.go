@@ -124,24 +124,33 @@ func (r *AppDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Check deployment status and update AppDeployment status accordingly
+	// Determine the new status based on deployment state
+	var newStatus string
+	var newMessage string
+
 	if found.Status.ReadyReplicas > 0 {
-		appDeployment.Status.Status = "Running"
-		appDeployment.Status.Message = fmt.Sprintf("Deployment is active with %d/%d replica(s) ready", found.Status.ReadyReplicas, found.Status.Replicas)
+		newStatus = "Running"
+		newMessage = fmt.Sprintf("Deployment is active with %d/%d replica(s) ready", found.Status.ReadyReplicas, found.Status.Replicas)
 	} else if found.Status.UnavailableReplicas > 0 {
-		appDeployment.Status.Status = "Pending"
-		appDeployment.Status.Message = fmt.Sprintf("Deployment has %d unavailable replica(s)", found.Status.UnavailableReplicas)
+		newStatus = "Pending"
+		newMessage = fmt.Sprintf("Deployment has %d unavailable replica(s)", found.Status.UnavailableReplicas)
 	} else if found.Status.Replicas == 0 {
-		appDeployment.Status.Status = "Pending"
-		appDeployment.Status.Message = "Deployment created, waiting for pods to be scheduled"
+		newStatus = "Pending"
+		newMessage = "Deployment created, waiting for pods to be scheduled"
 	} else {
-		appDeployment.Status.Status = "Pending"
-		appDeployment.Status.Message = "Deployment created, waiting for pods"
+		newStatus = "Pending"
+		newMessage = "Deployment created, waiting for pods"
 	}
 
-	err = r.updateStatus(ctx, req, appDeployment, logger)
-	if err != nil {
-		return ctrl.Result{}, err
+	// Only update status if it has changed
+	if appDeployment.Status.Status != newStatus || appDeployment.Status.Message != newMessage {
+		appDeployment.Status.Status = newStatus
+		appDeployment.Status.Message = newMessage
+
+		err = r.updateStatus(ctx, req, appDeployment, logger)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	return ctrl.Result{}, nil
@@ -218,10 +227,38 @@ func deploymentNeedsUpdate(dep *appsv1.Deployment, app *platformv1.AppDeployment
 
 // updateStatus updates the status of the AppDeployment with retry logic for conflict errors
 func (r *AppDeploymentReconciler) updateStatus(ctx context.Context, req ctrl.Request, appDeployment *platformv1.AppDeployment, logger zerolog.Logger) error {
+	// First, get the latest version of the resource to compare status
+	latestAppDeployment := &platformv1.AppDeployment{}
+	if err := r.Get(ctx, req.NamespacedName, latestAppDeployment); err != nil {
+		logger.Error().Err(err).Msg("Failed to get latest AppDeployment for status comparison")
+		return err
+	}
+
+	// Check if status has actually changed before updating
+	if latestAppDeployment.Status.Status == appDeployment.Status.Status &&
+		latestAppDeployment.Status.Message == appDeployment.Status.Message {
+		logger.Debug().Msg("Status unchanged, skipping update")
+		return nil
+	}
+
+	// Status has changed, proceed with update
 	var updateErr error
 	backoff := time.Second
 	for retries := 0; retries < 5; retries++ {
-		updateErr = r.Status().Update(ctx, appDeployment)
+		// Get the latest version again to avoid conflicts
+		if retries > 0 {
+			if err := r.Get(ctx, req.NamespacedName, latestAppDeployment); err != nil {
+				logger.Error().Err(err).Msg("Failed to get latest AppDeployment")
+				return err
+			}
+		}
+
+		// Copy only status fields to avoid overwriting spec changes
+		latestAppDeployment.Status.Status = appDeployment.Status.Status
+		latestAppDeployment.Status.Message = appDeployment.Status.Message
+
+		// Update status
+		updateErr = r.Status().Update(ctx, latestAppDeployment)
 		if updateErr == nil {
 			return nil
 		}
@@ -231,22 +268,8 @@ func (r *AppDeploymentReconciler) updateStatus(ctx context.Context, req ctrl.Req
 			return updateErr
 		}
 
-		// If we get a conflict, fetch the latest version and retry
+		// If we get a conflict, log and retry
 		logger.Info().Msg("Conflict detected when updating AppDeployment status, retrying with latest version")
-
-		// Get the latest version of the resource
-		latestAppDeployment := &platformv1.AppDeployment{}
-		if err := r.Get(ctx, req.NamespacedName, latestAppDeployment); err != nil {
-			logger.Error().Err(err).Msg("Failed to get latest AppDeployment")
-			return err
-		}
-
-		// Copy only status fields to avoid overwriting spec changes
-		latestAppDeployment.Status.Status = appDeployment.Status.Status
-		latestAppDeployment.Status.Message = appDeployment.Status.Message
-
-		// Update our reference to use the latest resource version
-		appDeployment = latestAppDeployment
 
 		// Wait before retrying
 		time.Sleep(backoff)

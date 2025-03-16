@@ -1,4 +1,4 @@
-.PHONY: init plan apply destroy kubeconfig build deploy install run
+.PHONY: init plan apply destroy kubeconfig build deploy install run undeploy
 
 init:
 	cd terraform && terraform init
@@ -30,3 +30,7 @@ run: build
 # Deploy a sample AppDeployment
 deploy: install
 	kubectl apply -f config/crd/app-deployment.yaml
+
+# Undeploy the sample AppDeployment
+undeploy:
+	kubectl delete -f config/crd/app-deployment.yaml
