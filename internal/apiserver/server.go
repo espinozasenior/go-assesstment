@@ -26,14 +26,21 @@ import (
 
 	deskreev1 "github.com/espinozasenior/go-assesstment.git/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
 
 type Server struct {
-	client client.Client
+	Client  client.Client
+	watcher watch.Interface
+	stopCh  chan struct{}
+	// Cache to store AppDeployment status information
+	DeploymentCache map[string]*deskreev1.AppDeployment
 }
 
 type DeployRequest struct {
@@ -65,20 +72,127 @@ func NewServer() (*Server, error) {
 		return nil, fmt.Errorf("error creating client: %v", err)
 	}
 
-	return &Server{client: client}, nil
+	server := &Server{
+		Client:          client,
+		stopCh:          make(chan struct{}),
+		DeploymentCache: make(map[string]*deskreev1.AppDeployment),
+	}
+
+	// Setup the watcher for AppDeployment CRDs
+	if err := server.setupWatcher(); err != nil {
+		return nil, fmt.Errorf("error setting up watcher: %v", err)
+	}
+
+	return server, nil
 }
 
 func (s *Server) Start(port int) error {
-	http.HandleFunc("/deploy", s.handleDeploy)
-	http.HandleFunc("/status/", s.handleStatus)
-	http.HandleFunc("/", s.handleDelete)
+	http.HandleFunc("/deploy", s.HandleDeploy)
+	http.HandleFunc("/status/", s.HandleStatus)
+	http.HandleFunc("/", s.HandleDelete)
 
 	addr := fmt.Sprintf(":%d", port)
 	log.Printf("Server starting on %s", addr)
 	return http.ListenAndServe(addr, nil)
 }
 
-func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
+// setupWatcher creates a watch.Interface to monitor AppDeployment CRD changes
+func (s *Server) setupWatcher() error {
+	// Create a dynamic client to watch for AppDeployment resources
+	cfg, err := config.GetConfig()
+	if err != nil {
+		return fmt.Errorf("error getting kubeconfig: %v", err)
+	}
+
+	// Create a dynamic client
+	dynamicClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("error creating dynamic client: %v", err)
+	}
+
+	// Define the GVR (GroupVersionResource) for AppDeployment
+	appDeploymentGVR := schema.GroupVersionResource{
+		Group:    "deskree.platform.deskree.com",
+		Version:  "v1",
+		Resource: "appdeployments",
+	}
+
+	// Create a watcher for AppDeployment resources
+	watcher, err := dynamicClient.Resource(appDeploymentGVR).Namespace("").Watch(context.Background(), metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("error creating watcher: %v", err)
+	}
+
+	s.watcher = watcher
+
+	// Start a goroutine to handle watch events
+	go s.watchEvents()
+
+	return nil
+}
+
+// watchEvents processes events from the watcher
+func (s *Server) watchEvents() {
+	log.Println("Starting to watch AppDeployment CRD changes")
+	defer log.Println("Stopped watching AppDeployment CRD changes")
+
+	for {
+		select {
+		case event, ok := <-s.watcher.ResultChan():
+			if !ok {
+				log.Println("Watcher channel closed, restarting watcher...")
+				// Try to restart the watcher
+				if err := s.setupWatcher(); err != nil {
+					log.Printf("Failed to restart watcher: %v", err)
+					return
+				}
+				continue
+			}
+
+			// Process the event based on its type
+			switch event.Type {
+			case watch.Added, watch.Modified:
+				// Convert the unstructured object to AppDeployment
+				unstructured, ok := event.Object.(*metav1.PartialObjectMetadata)
+				if !ok {
+					log.Printf("Unexpected object type: %T", event.Object)
+					continue
+				}
+
+				// Get the AppDeployment from the API server to ensure we have the latest state
+				appDeployment := &deskreev1.AppDeployment{}
+				err := s.Client.Get(context.Background(), types.NamespacedName{Name: unstructured.GetName(), Namespace: unstructured.GetNamespace()}, appDeployment)
+				if err != nil {
+					log.Printf("Error getting AppDeployment %s/%s: %v", unstructured.GetNamespace(), unstructured.GetName(), err)
+					continue
+				}
+
+				// Store the AppDeployment in the cache
+				s.DeploymentCache[appDeployment.Name] = appDeployment
+				log.Printf("AppDeployment %s updated in cache: state=%s, replicas=%d",
+					appDeployment.Name, appDeployment.Status.State, appDeployment.Status.AvailableReplicas)
+
+			case watch.Deleted:
+				unstructured, ok := event.Object.(*metav1.PartialObjectMetadata)
+				if !ok {
+					log.Printf("Unexpected object type: %T", event.Object)
+					continue
+				}
+
+				// Remove the AppDeployment from the cache
+				delete(s.DeploymentCache, unstructured.GetName())
+				log.Printf("AppDeployment %s removed from cache", unstructured.GetName())
+
+			case watch.Error:
+				log.Printf("Error event received: %v", event.Object)
+			}
+		case <-s.stopCh:
+			return
+		}
+	}
+}
+
+func (s *Server) HandleDeploy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -144,7 +258,7 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	if err := s.client.Create(context.Background(), appDeployment); err != nil {
+	if err := s.Client.Create(context.Background(), appDeployment); err != nil {
 		response := map[string]string{
 			"status":  "error",
 			"message": fmt.Sprintf("Failed to create AppDeployment: %v", err),
@@ -164,7 +278,7 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -182,10 +296,24 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	appDeployment := &deskreev1.AppDeployment{}
-	if err := s.client.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "default"}, appDeployment); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to get AppDeployment: %v", err), http.StatusNotFound)
-		return
+	var appDeployment *deskreev1.AppDeployment
+	var found bool
+
+	// Check the cache first
+	appDeployment, found = s.DeploymentCache[name]
+
+	// If not found in cache, get it from the API server
+	if !found {
+		log.Printf("AppDeployment %s not found in cache, fetching from API server", name)
+		appDeployment = &deskreev1.AppDeployment{}
+		if err := s.Client.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "default"}, appDeployment); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to get AppDeployment: %v", err), http.StatusNotFound)
+			return
+		}
+		// Add to cache for future requests
+		s.DeploymentCache[name] = appDeployment
+	} else {
+		log.Printf("AppDeployment %s found in cache", name)
 	}
 
 	response := StatusResponse{
@@ -197,7 +325,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
+func (s *Server) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -222,9 +350,15 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	if err := s.client.Delete(context.Background(), appDeployment); err != nil {
+	if err := s.Client.Delete(context.Background(), appDeployment); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to delete AppDeployment: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	// Remove the deleted AppDeployment from the cache to prevent stale data
+	if _, exists := s.DeploymentCache[name]; exists {
+		delete(s.DeploymentCache, name)
+		log.Printf("AppDeployment %s removed from cache after deletion", name)
 	}
 
 	w.WriteHeader(http.StatusOK)
