@@ -1,0 +1,21 @@
+apiVersion: deskree.platform.deskree.com/v1
+kind: AppDeployment
+metadata:
+  labels:
+    app.kubernetes.io/name: go-assesstment
+    app.kubernetes.io/managed-by: kustomize
+  name: my-app
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  memoryLimit: "512Mi"
+  minReplicas: 1
+  maxReplicas: 3
+  template:
+    spec:
+      containers:
+      - name: my-nginx-app
+        image: nginx:latest
+        ports:
+        - containerPort: 80

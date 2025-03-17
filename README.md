@@ -3,6 +3,7 @@
 * [Gcloud CLI](https://cloud.google.com/sdk/docs/install)
 * [Terraform](https://developer.hashicorp.com/terraform/tutorials/gcp-get-started/install-cli)
 * [Kubectl](https://kubernetes.io/docs/tasks/tools/)
+* [Kubebuilder](https://book.kubebuilder.io/quick-start)
 
 ### INSTRUCTIONS
 - Copy `terraform/terraform.tfvars.example` to `terraform/terraform.tfvars` and fill in your GCP project ID
