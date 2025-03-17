@@ -7,4 +7,14 @@ layout:
 - go.kubebuilder.io/v4
 projectName: go-assesstment
 repo: github.com/espinozasenior/go-assesstment.git
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: platform.deskree.com
+  group: deskree
+  kind: AppDeployment
+  path: github.com/espinozasenior/go-assesstment.git/api/v1
+  version: v1
 version: "3"
