@@ -145,12 +145,23 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.client.Create(context.Background(), appDeployment); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to create AppDeployment: %v", err), http.StatusInternalServerError)
+		response := map[string]string{
+			"status":  "error",
+			"message": fmt.Sprintf("Failed to create AppDeployment: %v", err),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
 		return
 	}
 
+	response := map[string]string{
+		"status":  "success",
+		"message": fmt.Sprintf("Deployment CRD %s created", req.Name),
+	}
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "✅ AppDeployment \"%s\" created.\n", req.Name)
+	json.NewEncoder(w).Encode(response)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
