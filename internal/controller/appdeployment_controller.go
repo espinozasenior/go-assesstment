@@ -150,6 +150,7 @@ func (r *AppDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 func (r *AppDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&deskreev1.AppDeployment{}).
+		Owns(&appsv1.Deployment{}).
 		Named("appdeployment").
 		Complete(r)
 }
