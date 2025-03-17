@@ -20,7 +20,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 
@@ -31,8 +30,13 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+)
+
+var (
+	apiLog = ctrl.Log.WithName("apiserver")
 )
 
 type Server struct {
@@ -92,7 +96,7 @@ func (s *Server) Start(port int) error {
 	http.HandleFunc("/", s.HandleDelete)
 
 	addr := fmt.Sprintf(":%d", port)
-	log.Printf("Server starting on %s", addr)
+	apiLog.Info("Server starting", "address", addr)
 	return http.ListenAndServe(addr, nil)
 }
 
@@ -133,17 +137,17 @@ func (s *Server) setupWatcher() error {
 
 // watchEvents processes events from the watcher
 func (s *Server) watchEvents() {
-	log.Println("Starting to watch AppDeployment CRD changes")
-	defer log.Println("Stopped watching AppDeployment CRD changes")
+	apiLog.Info("Starting to watch AppDeployment CRD changes")
+	defer apiLog.Info("Stopped watching AppDeployment CRD changes")
 
 	for {
 		select {
 		case event, ok := <-s.watcher.ResultChan():
 			if !ok {
-				log.Println("Watcher channel closed, restarting watcher...")
+				apiLog.Info("Watcher channel closed, restarting watcher...")
 				// Try to restart the watcher
 				if err := s.setupWatcher(); err != nil {
-					log.Printf("Failed to restart watcher: %v", err)
+					apiLog.Error(err, "Failed to restart watcher")
 					return
 				}
 				continue
@@ -155,7 +159,7 @@ func (s *Server) watchEvents() {
 				// Convert the unstructured object to AppDeployment
 				unstructured, ok := event.Object.(*metav1.PartialObjectMetadata)
 				if !ok {
-					log.Printf("Unexpected object type: %T", event.Object)
+					apiLog.Info("Unexpected object type", "type", fmt.Sprintf("%T", event.Object))
 					continue
 				}
 
@@ -163,28 +167,30 @@ func (s *Server) watchEvents() {
 				appDeployment := &deskreev1.AppDeployment{}
 				err := s.Client.Get(context.Background(), types.NamespacedName{Name: unstructured.GetName(), Namespace: unstructured.GetNamespace()}, appDeployment)
 				if err != nil {
-					log.Printf("Error getting AppDeployment %s/%s: %v", unstructured.GetNamespace(), unstructured.GetName(), err)
+					apiLog.Error(err, "Error getting AppDeployment", "namespace", unstructured.GetNamespace(), "name", unstructured.GetName())
 					continue
 				}
 
 				// Store the AppDeployment in the cache
 				s.DeploymentCache[appDeployment.Name] = appDeployment
-				log.Printf("AppDeployment %s updated in cache: state=%s, replicas=%d",
-					appDeployment.Name, appDeployment.Status.State, appDeployment.Status.AvailableReplicas)
+				apiLog.Info("AppDeployment updated in cache",
+					"name", appDeployment.Name,
+					"state", appDeployment.Status.State,
+					"replicas", appDeployment.Status.AvailableReplicas)
 
 			case watch.Deleted:
 				unstructured, ok := event.Object.(*metav1.PartialObjectMetadata)
 				if !ok {
-					log.Printf("Unexpected object type: %T", event.Object)
+					apiLog.Info("Unexpected object type", "type", fmt.Sprintf("%T", event.Object))
 					continue
 				}
 
 				// Remove the AppDeployment from the cache
 				delete(s.DeploymentCache, unstructured.GetName())
-				log.Printf("AppDeployment %s removed from cache", unstructured.GetName())
+				apiLog.Info("AppDeployment removed from cache", "name", unstructured.GetName())
 
 			case watch.Error:
-				log.Printf("Error event received: %v", event.Object)
+				apiLog.Error(nil, "Error event received", "object", event.Object)
 			}
 		case <-s.stopCh:
 			return
@@ -304,16 +310,17 @@ func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
 
 	// If not found in cache, get it from the API server
 	if !found {
-		log.Printf("AppDeployment %s not found in cache, fetching from API server", name)
+		apiLog.Info("AppDeployment not found in cache, fetching from API server", "name", name)
 		appDeployment = &deskreev1.AppDeployment{}
 		if err := s.Client.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "default"}, appDeployment); err != nil {
+			apiLog.Error(err, "Failed to get AppDeployment", "name", name)
 			http.Error(w, fmt.Sprintf("Failed to get AppDeployment: %v", err), http.StatusNotFound)
 			return
 		}
 		// Add to cache for future requests
 		s.DeploymentCache[name] = appDeployment
 	} else {
-		log.Printf("AppDeployment %s found in cache", name)
+		apiLog.Info("AppDeployment found in cache", "name", name)
 	}
 
 	response := StatusResponse{
@@ -358,7 +365,7 @@ func (s *Server) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	// Remove the deleted AppDeployment from the cache to prevent stale data
 	if _, exists := s.DeploymentCache[name]; exists {
 		delete(s.DeploymentCache, name)
-		log.Printf("AppDeployment %s removed from cache after deletion", name)
+		apiLog.Info("AppDeployment removed from cache after deletion", "name", name)
 	}
 
 	w.WriteHeader(http.StatusOK)

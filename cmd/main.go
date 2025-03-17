@@ -100,7 +100,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		setupLog.Info("starting API server", "port", apiServerPort)
+		setupLog.Info("starting API server (apiserver)", "port", apiServerPort)
 		if err := server.Start(apiServerPort); err != nil {
 			setupLog.Error(err, "problem running API server")
 			os.Exit(1)
