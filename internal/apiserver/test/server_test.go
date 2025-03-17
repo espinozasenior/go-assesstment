@@ -33,7 +33,9 @@ import (
 func TestCacheHandlingAfterDelete(t *testing.T) {
 	// Create a fake client with the AppDeployment scheme
 	scheme := runtime.NewScheme()
-	v1.AddToScheme(scheme)
+	if err := v1.AddToScheme(scheme); err != nil {
+		t.Fatalf("Failed to add v1 scheme: %v", err)
+	}
 
 	// Create a test AppDeployment
 	appName := "test-app"

@@ -271,7 +271,9 @@ func (s *Server) HandleDeploy(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(response)
+		if err := json.NewEncoder(w).Encode(response); err != nil {
+			apiLog.Error(err, "Failed to encode error response")
+		}
 		return
 	}
 
@@ -281,7 +283,9 @@ func (s *Server) HandleDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		apiLog.Error(err, "Failed to encode success response")
+	}
 }
 
 func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
@@ -329,7 +333,9 @@ func (s *Server) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		apiLog.Error(err, "Failed to encode status response")
+	}
 }
 
 func (s *Server) HandleDelete(w http.ResponseWriter, r *http.Request) {
@@ -369,5 +375,7 @@ func (s *Server) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "AppDeployment \"%s\" deleted.\n", name)
+	if _, err := fmt.Fprintf(w, "AppDeployment \"%s\" deleted.\n", name); err != nil {
+		apiLog.Error(err, "Failed to write delete response")
+	}
 }
