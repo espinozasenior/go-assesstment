@@ -34,6 +34,15 @@ import (
 	deskreev1 "github.com/espinozasenior/go-assesstment.git/api/v1"
 )
 
+const (
+	// StatePending indicates the deployment is in progress or waiting for resources
+	StatePending = "Pending"
+	// StateRunning indicates the deployment is active and running
+	StateRunning = "Running"
+	// StateFailed indicates the deployment has failed
+	StateFailed = "Failed"
+)
+
 // AppDeploymentReconciler reconciles a AppDeployment object
 type AppDeploymentReconciler struct {
 	client.Client
@@ -87,7 +96,7 @@ func (r *AppDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// Create a new deployment based on the AppDeployment spec
 			_, err = r.createDeploymentFromAppDeployment(appDeployment, req.Namespace)
 			if err != nil {
-				appDeployment.Status.State = "Failed"
+				appDeployment.Status.State = StateFailed
 				appDeployment.Status.Message = fmt.Sprintf("Failed to create deployment: %v", err)
 				appDeployment.Status.AvailableReplicas = 0
 				logger.Error(err, "Failed to create Deployment for AppDeployment", "DeploymentName", deploymentName)
@@ -95,34 +104,33 @@ func (r *AppDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			}
 
 			// Set the deployment status
-			appDeployment.Status.State = "Pending"
+			appDeployment.Status.State = StatePending
 			appDeployment.Status.Message = "Deployment created, waiting for replicas"
 			appDeployment.Status.AvailableReplicas = 0
 			logger.Info("Deployment created", "DeploymentName", deploymentName)
 		} else {
 			// Error getting deployment
-			appDeployment.Status.State = "Failed"
+			appDeployment.Status.State = StateFailed
 			appDeployment.Status.Message = fmt.Sprintf("Error getting deployment: %v", err)
 			appDeployment.Status.AvailableReplicas = 0
 			logger.Error(err, "Failed to get Deployment for AppDeployment", "DeploymentName", deploymentName)
 		}
 	} else {
-		// Deployment exists, check its status
 		availableReplicas := deployment.Status.AvailableReplicas
 		desiredReplicas := *deployment.Spec.Replicas
 
 		appDeployment.Status.AvailableReplicas = availableReplicas
 
 		if availableReplicas == 0 {
-			appDeployment.Status.State = "Pending"
+			appDeployment.Status.State = StatePending
 			appDeployment.Status.Message = "Deployment has no available replicas"
 			logger.Info("Deployment has no available replicas", "DeploymentName", deploymentName)
 		} else if availableReplicas < desiredReplicas {
-			appDeployment.Status.State = "Pending"
+			appDeployment.Status.State = StatePending
 			appDeployment.Status.Message = fmt.Sprintf("Deployment is scaling up: %d/%d replicas available", availableReplicas, desiredReplicas)
 			logger.Info("Deployment is scaling up", "DeploymentName", deploymentName, "AvailableReplicas", availableReplicas, "DesiredReplicas", desiredReplicas)
 		} else {
-			appDeployment.Status.State = "Running"
+			appDeployment.Status.State = StateRunning
 			appDeployment.Status.Message = fmt.Sprintf("Deployment is active with %d replica(s)", availableReplicas)
 			logger.Info("Deployment is running", "DeploymentName", deploymentName, "AvailableReplicas", availableReplicas)
 		}
