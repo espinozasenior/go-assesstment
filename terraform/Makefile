@@ -13,4 +13,4 @@ destroy:
 	terraform destroy -auto-approve
 
 kubeconfig:
-	./../scripts/generate_kubeconfig.sh
+	./scripts/generate_kubeconfig.sh
