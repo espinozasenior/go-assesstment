@@ -14,7 +14,7 @@
 - Run `make init` to initialize Terraform
 - Run `make plan` to see any changes that are required for your infrastructure
 - Run `make apply` to create the GKE cluster
-- Run `make kubeconfig` to generate the kubeconfig file to interact with your cluster
+- Run `./scripts/generate_kubeconfig.sh` to generate the kubeconfig file to interact with your cluster
 
 
 ### KUBEBUILDER SETUP
